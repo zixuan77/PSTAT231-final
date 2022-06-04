@@ -1,0 +1,400 @@
+_---
+title: "Final Project Memo"
+author: "Olivia Dong"
+date: "2022/4/9"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+## Loading packges
+```{r}
+library(ggplot2)
+library(dbplyr)
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+library(reshape2)
+```
+```{r}
+library(corrr)
+library(corrplot)
+library(ISLR) 
+library(ISLR2)
+library(discrim)
+library(glmnet)
+tidymodels_prefer()
+library(pROC)
+library(boot)
+library(rsample)
+
+```
+```{r}
+library(rpart.plot)
+library(vip)
+library(janitor)
+library(randomForest)
+library(xgboost)
+library(kernlab)
+```
+
+## Dataset Despription
+The dataset consists of features are computed from a digitized image of a fine needle aspirate (FNA) of a breast mass. They describe characteristics of the cell nuclei present in the image.
+
+The dataset includes 32 columns and 569 observations in total. There is no missing value. 
+The meaning of each variable is described below:
+
+id: ID number
+
+diagnosis: The diagnosis of breast tissues (M = malignant, B = benign)
+
+radius_mean: mean of distances from center to points on the perimeter
+
+texture_mean: standard deviation of gray-scale values
+
+perimeter_mean: mean size of the core tumor
+
+area_mean: (no description provided)
+
+smoothness_mean: mean of local variation in radius lengths
+
+compactness_mean: mean of perimeter^2 / area - 1.0
+
+concavity_mean: mean of severity of concave portions of the contour
+
+concave points_mean: mean for number of concave portions of the contour
+
+symmetry_mean: (no description provided)
+
+fractal_dimension_mean: mean for "coastline approximation" - 1
+
+radius_se: standard error for the mean of distances from center to points on the perimeter
+
+texture_se: standard error for standard deviation of gray-scale values
+
+perimeter_se: (no description provided)
+
+area_se: (no description provided)
+
+smoothness_se: standard error for local variation in radius lengths
+
+compactness_se: standard error for perimeter^2 / area - 1.0
+
+concavity_se: standard error for severity of concave portions of the contour
+
+concave points_se: standard error for number of concave portions of the contour
+
+symmetry_se: (no description provided)
+
+fractal_dimension_se: standard error for "coastline approximation" - 1
+
+radius_worst: "worst" or largest mean value for mean of distances from center to points on the perimeter
+
+texture_worst: "worst" or largest mean value for standard deviation of gray-scale values
+
+perimeter_worst: (no description provided)
+
+area_worst: (no description provided)
+
+smoothness_worst: "worst" or largest mean value for local variation in radius lengths
+
+compactness_worst: "worst" or largest mean value for perimeter^2 / area - 1.0
+
+concavity_worst: "worst" or largest mean value for severity of concave portions of the contour concave
+
+points_worst: "worst" or largest mean value for number of concave portions of the contour
+
+symmetry_worst: (no description provided)
+
+fractal_dimension_worst: "worst" or largest mean value for "coastline approximation" - 1
+
+The data can be found on UCI Machine Learning Repository: https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+%28Diagnostic%29
+
+## Introduction
+The response variable is 'diagnosis', which is categorical with value "M"=Malignant and "B"=benign. The tumor is typically diagnosed as either malignant or benign. In the dataset, 63% of all observations are benign and 37% are malignant. The main goal of this project is to find a model that could be more accurate to classify the tumor. Therefore, classification approach will be used. All variables except "ID" and "diagnosis" could be predictors. However, I think the first ten predictors will be especially useful, including radius (mean of distances from center to points on the perimeter), texture (standard deviation of gray-scale values), perimeter, area and so forth. These are features that directly computed from the tumor image that are most significant and explicit characteristics of tumor cells. These measurements are likely to indicate the diagnosis results. The model will be predictive, since the main goal is to train the model with characteristics of tumor to predict whether the tumor is malignant or benign. It is also important to find the group of features that fits the model best. 
+
+
+## Loading Data 
+
+```{r cars}
+data <- read.csv("data.csv")
+breast_cancer <- data[,-33]
+breast_cancer <- clean_names(breast_cancer)
+head(breast_cancer)
+```
+```{r}
+breast_cancer$diagnosis<-factor(breast_cancer$diagnosis, labels=c('B','M'))
+head(breast_cancer)
+```
+First, check if there is missing data.
+
+```{r}
+sum(is.na(breast_cancer))
+```
+
+There is no missing data. Then, we process to the look at the distribution of the response variable.  
+
+## EDA
+
+
+```{r}
+prop.table(table(breast_cancer$diagnosis))*100
+ggplot(data=breast_cancer,aes(diagnosis)) + geom_bar()
+```
+
+
+In the following boxplots, it is noticeable that all breast cancer cell diagnosed as malignant has higher value in all predictors. 
+
+
+```{r}
+#Mean
+
+data_mean <- melt(breast_cancer[,-c(1,13:32)], id.var = "diagnosis")
+box_mean <- ggplot(data = data_mean, aes(x=variable, y=value)) + 
+  geom_boxplot(aes(fill=diagnosis)) + facet_wrap( ~ variable, scales="free")+ xlab("Variables") + ylab("")+ guides(fill=guide_legend(title="Group"))
+box_mean
+
+#Se
+data_se <- melt(breast_cancer[,-c(1,3:12,23:32)], id.var = "diagnosis")
+box_se <- ggplot(data = data_se, aes(x=variable, y=value)) + 
+  geom_boxplot(aes(fill=diagnosis)) + facet_wrap( ~ variable, scales="free")+ xlab("Variables") + ylab("")+ guides(fill=guide_legend(title="Group"))
+box_se
+
+#Worst
+data_worst <- melt(breast_cancer[,c(2,23:32)], id.var = "diagnosis")
+box_worst <- ggplot(data = data_worst, aes(x=variable, y=value)) + 
+  geom_boxplot(aes(fill=diagnosis)) + facet_wrap( ~ variable, scales="free")+ xlab("Variables") + ylab("")+ guides(fill=guide_legend(title="Group"))
+box_worst
+```
+
+## Data splitting
+
+The data is splitted with 454 training data and 115 testing data points.
+
+```{r}
+cancer_split <- initial_split(breast_cancer,prop=0.80,strata=diagnosis)
+cancer_training <- training(cancer_split)
+cancer_testing <- testing(cancer_split)
+dim(cancer_training)
+dim(cancer_testing)
+
+bc_fold <- vfold_cv(cancer_training,v=10)
+```
+
+## Model building
+
+## Buiding the recipe
+```{r}
+bc_recipe <- recipe(diagnosis~radius_mean + texture_mean + perimeter_mean + area_mean + smoothness_mean + compactness_mean+ concavity_mean+ symmetry_mean + concave_points_mean + fractal_dimension_mean + radius_se + texture_se + perimeter_se + area_se + smoothness_se + compactness_se+ concavity_se + concave_points_se + symmetry_se + fractal_dimension_se + radius_worst + texture_worst + perimeter_worst + area_worst + smoothness_worst + compactness_worst+ concavity_worst + concave_points_worst + symmetry_worst + fractal_dimension_worst,data=cancer_training) %>% step_normalize(all_predictors())
+
+bc_recipe %>% prep() %>% bake(cancer_training)
+```
+
+
+
+## Preparing & Running The Models for Repeated Cross Validation
+Since I an doing classification, I choose build five models which are frequently used in classification problems: 
+1. Logistic regression
+2. Naive Bayes
+3. Random forest
+4. Boosted tree
+5. SVM
+
+
+## 1. Logistic Regression
+```{r}
+log_reg <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+
+```
+```{r}
+log_wkflow <- workflow() %>% 
+  add_model(log_reg) %>% 
+  add_recipe(bc_recipe)
+
+log_fit <- fit(log_wkflow, cancer_training)
+
+log_fit %>% tidy
+```
+```{r}
+log_fitfold <- fit_resamples(log_wkflow, bc_fold)
+collect_metrics(log_fitfold)
+```
+```{r}
+log_pre <-predict(log_fit, new_data = cancer_training, type = "class")
+log_reg_acc <- augment(log_fit, new_data = cancer_training) %>%
+  accuracy(truth = diagnosis, estimate = .pred_class)
+log_pre
+log_reg_acc
+
+```
+
+```{r}
+predict(log_fit, new_data = cancer_testing, type = "class")
+
+augment(log_fit, new_data = cancer_testing) %>%
+  conf_mat(truth = diagnosis, estimate = .pred_class)
+
+augment(log_fit, new_data = cancer_testing) %>%
+  conf_mat(truth = diagnosis, estimate = .pred_class) %>% autoplot(type="heatmap")
+
+augment(log_fit, new_data = cancer_testing) %>% accuracy(truth=diagnosis,estimate=.pred_class)
+```
+## Random Forest
+
+```{r}
+rf_spec <- rand_forest(mtry = tune(),trees = tune(), min_n=tune()) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+rf_wf <- workflow() %>%
+  add_recipe(bc_recipe) %>%
+  add_model(rf_spec)
+
+```
+```{r}
+reg_grid <- grid_regular(mtry(range = c(1, 15)), trees(range=c(100,500)), min_n(range=c(1,10)),levels = 4)
+
+```
+```{r}
+tune_res2 <- tune_grid(
+  rf_wf, 
+  resamples = bc_fold, 
+  grid = reg_grid, 
+  metrics = metric_set(accuracy)
+)
+autoplot(tune_res2)
+```
+
+```{r}
+
+collect_metrics(tune_res2) %>% arrange(desc(mean))
+```
+```{r}
+best_penalty2 <- select_best(tune_res2,metric="accuracy")
+rf_final <- finalize_workflow(rf_wf, best_penalty2)
+
+rf_fit <- fit(rf_final, data = cancer_training)
+vip(rf_fit%>% extract_fit_engine())
+augment(rf_fit, new_data = cancer_testing) %>%
+   accuracy(diagnosis, .pred_class)
+
+```
+## Naive Bayes
+
+```{r}
+nb_mod <- naive_Bayes() %>% 
+  set_mode("classification") %>% 
+  set_engine("klaR") %>% 
+  set_args(usekernel = FALSE) 
+
+nb_wkflow <- workflow() %>% 
+  add_model(nb_mod) %>% 
+  add_recipe(bc_recipe)
+
+nb_fitfold <- fit_resamples(nb_wkflow, bc_fold)
+
+```
+
+
+```{r}
+collect_metrics(nb_fitfold)
+
+```
+
+
+
+
+## Boosted Tree
+```{r}
+boost_spec <- boost_tree(trees = tune()) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+boost_wf <- workflow() %>%
+  add_model(boost_spec) %>%
+  add_recipe(bc_recipe)
+boost_grid <- grid_regular(trees(range=c(10,1000)),levels = 4)
+```
+
+```{r}
+tune_res3 <- tune_grid(
+  boost_wf, 
+  resamples = bc_fold, 
+  grid = boost_grid, 
+  metrics = metric_set(accuracy)
+)
+autoplot(tune_res3)
+```
+```{r}
+collect_metrics(tune_res3) %>% arrange(desc(mean))
+```
+```{r}
+best_penalty3<- select_best(tune_res3,metric="accuracy")
+boost_final <- finalize_workflow(boost_wf, best_penalty3)
+boost_fit <- fit(boost_final, data = cancer_training)
+
+augment(boost_fit, new_data = cancer_testing) %>%
+   accuracy(diagnosis, .pred_class)
+```
+## SVM
+
+```{r}
+svm_rbf_spec <- svm_rbf(cost=tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+
+svm_wf <- workflow() %>%
+  add_model(svm_rbf_spec) %>%
+  add_recipe(bc_recipe)
+```
+
+
+
+```{r}
+svm_grid <- grid_regular(cost(range=c(0.1,5)),levels = 8)
+```
+```{r}
+tune_svm <- tune_grid(
+  svm_wf, 
+  resamples = bc_fold, 
+  grid = svm_grid, 
+  metrics = metric_set(accuracy)
+)
+autoplot(tune_svm)
+```
+
+```{r}
+collect_metrics(tune_svm) %>% arrange(desc(mean))
+```
+
+
+
+```{r}
+best_svm<- select_best(tune_svm,metric="accuracy")
+```
+## Compare Model Performance
+```{r}
+acc <- data.frame(Model=c("Logistic regression", "Random forest", "Naive Bayes", "Boosted tree","SVM"),
+                      rocauc = c(0.935942,0.9691304,0.9248792,0.9624155,0.9735266	))
+acc
+```
+
+We notice that SVM performs best on folds. Then we SVM model to fit the data. 
+
+```{r}
+best_final <- select_best(tune_svm,metric="accuracy")
+wf_final <- finalize_workflow(svm_wf, best_final)
+
+final_fit <- fit(wf_final, data = cancer_training)
+
+augment(final_fit, new_data = cancer_testing) %>%
+   accuracy(diagnosis, .pred_class)
+
+```
+## Conclusion
+
