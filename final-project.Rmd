@@ -1,0 +1,482 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+_---  
+title: "Final Project Memo"  
+author: "Olivia Dong"  
+date: "2022/4/9"  
+output: html_document  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message=FALSE, warning=FALSE)
+```
+
+## R Markdown
+
+
+
+## Introduction
+This project means to find the best-performance model which will accurately classify the tumor cells. The tumor is typically diagnosed as either malignant or benign. The response variable is recorded as 'diagnosis' in the data set with with categorical values "M"=Malignant and "B"=benign. Therefore, classification approach will be used in this project. Thirty features(predictors) will be implimented to fit the model, including the mean, standard error and worst value of various characteristics of tumor nuclei. These are features that directly computed from the tumor image that are most significant and explicit characteristics of tumor cells. Patterns of these measurements are likely to indicate the diagnosis results. 
+
+This model is useful for the pathologist and other medical professionals. The machine learning model may help them determine the different patterns of malignant and benign tumors, which may not be easily noticed by eyes. Also, there are so many features that have to be considered at a time during diagnosis. A machine learning model provides a more efficient way for analysis. 
+
+## What is FNA?
+In an FNA, the doctor uses a very thin, hollow needle attached to a syringe to withdraw (aspirate) a small amount of breast tissue or fluid from a suspicious area. If an FNA is done to test a suspicious area in the breast, the sample is then checked for cancer cells. 
+
+## Dataset Despription
+The dataset consists of features are computed from a digitized image of a fine needle aspirate (FNA) of a breast mass. They describe characteristics of the cell nuclei present in the image.
+
+The dataset includes 32 columns and 569 observations in total. There is no missing value. 
+While a more thorough description can be found in the codebook, the meaning of some important variables is described below:
+
+id: ID number
+
+diagnosis: The diagnosis of breast tissues (M = malignant, B = benign)
+
+radius_mean: mean of distances from center to points on the perimeter
+
+texture_mean: standard deviation of gray-scale values
+
+perimeter_mean: mean size of the core tumor
+
+radius_se: standard error for the mean of distances from center to points on the perimeter
+
+texture_se: standard error for standard deviation of gray-scale values
+
+perimeter_se: (no description provided)
+
+radius_worst: "worst" or largest mean value for mean of distances from center to points on the perimeter
+
+texture_worst: "worst" or largest mean value for standard deviation of gray-scale values
+
+perimeter_worst: (no description provided)
+
+
+## Source of the Dataset
+The data can be found on UCI Machine Learning Repository: https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+%28Diagnostic%29
+
+
+
+## Loading Packges
+
+```{r}
+library(ggplot2)
+library(dbplyr)
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+library(reshape2)
+library(corrr)
+library(corrplot)
+library(ISLR) 
+library(ISLR2)
+library(discrim)
+library(glmnet)
+tidymodels_prefer()
+library(pROC)
+library(boot)
+library(rsample)
+library(rpart.plot)
+library(vip)
+library(janitor)
+library(randomForest)
+library(xgboost)
+library(kernlab)
+```
+
+```{r}
+set.seed(1234)
+```
+## Loading and Cleaning Data
+
+
+```{r}
+# read in data
+data <- read.csv("data.csv")
+head(data)
+```
+
+```{r,echo=FALSE}
+
+# find missing value pattern
+missing_values <- data %>% summarize_all(funs(sum(is.na(.))/n()))
+
+missing_values <- gather(missing_values, key="feature", value="missing_pct")
+
+missing_values %>% 
+
+  ggplot(aes(x=feature,y=missing_pct)) +
+
+  geom_bar(stat="identity",fill="red")+
+
+  coord_flip()+theme_bw()
+```
+
+We could notice that all predictors are complete except a completely null column. This column is dropped below.  
+
+```{r}
+# remove the missing data
+breast_cancer <- data[,-33]
+breast_cancer <- clean_names(breast_cancer)
+# factorize response
+breast_cancer$diagnosis<-factor(breast_cancer$diagnosis, labels=c('B','M'))
+head(breast_cancer)
+```
+
+There is no more missing data. 
+  
+```{r}
+# find the number of missing values
+sum(is.na(breast_cancer))
+```
+
+```{r,echo=FALSE}
+# the pattern of missing data
+missing_values <- breast_cancer %>% summarize_all(funs(sum(is.na(.))/n()))
+
+missing_values <- gather(missing_values, key="feature", value="missing_pct")
+
+missing_values %>% 
+
+  ggplot(aes(x=feature,y=missing_pct)) +
+
+  geom_bar(stat="identity",fill="red")+
+
+  coord_flip()+theme_bw()
+```
+
+There is no missing data now. Then, we process to the look at the visualize the relationship between variables.
+
+## EDA
+In this section, I present the distribution of the response variables. Then, I use boxplot the illustrate the relationship between response variable and all the predictors. Finally, the correlation matrix suggests that there is high correlation between some of the predictors.
+
+In the dataset, 63% of all observations are benign and 37% are malignant. 
+```{r,echo=FALSE}
+# the proportion and distribution of response variable
+prop.table(table(breast_cancer$diagnosis))*100
+ggplot(data=breast_cancer,aes(diagnosis)) + geom_bar()
+```
+
+
+The hypothesis for this project is that the malignant tumors have different value of features from benign tumors. In the following boxplots, it is noticeable that, in general, all breast cancer cell diagnosed as malignant has higher value in all predictors. For example, the first panel displays that the mean value of radius of malignant tumors is generally bigger than that of benign tumors. This may indicate that the tumor with bigger radius is more likely to be malignant. Similar logistic apply to other predictors.   
+
+
+```{r,echo=FALSE}
+# relationship between Mean value of features and diagnosis result
+
+data_mean <- melt(breast_cancer[,-c(1,13:32)], id.var = "diagnosis")
+box_mean <- ggplot(data = data_mean, aes(x=variable, y=value)) + 
+  geom_boxplot(aes(fill=diagnosis)) + facet_wrap( ~ variable, scales="free")+ xlab("Variables") + ylab("")+ guides(fill=guide_legend(title="Group")) + labs(title="Mean value v.s. diagnosis result")
+box_mean
+```
+
+The difference between malignant benign tumors in standard error of characteristics is not much significant. However, we could still notice that malignant tumors has higher value than benign tumors for most of the predictors. In addition, the IQR of the boxplots below are relatively small, which means that the values are relatively close to each other.  It may indicate that, for example, the values of radius of a tumors measured at different points on the edge have little variation. 
+
+```{r,echo=FALSE}
+#relationship between standard error of features and diagnosis result
+data_se <- melt(breast_cancer[,-c(1,3:12,23:32)], id.var = "diagnosis")
+box_se <- ggplot(data = data_se, aes(x=variable, y=value)) + 
+  geom_boxplot(aes(fill=diagnosis)) + facet_wrap( ~ variable, scales="free")+ xlab("Variables") + ylab("")+ guides(fill=guide_legend(title="Group")) + labs(title="SE value v.s. diagnosis result")
+box_se
+```
+
+The boxplot below represents the relationship how malignant and benign tumors varies in the "worst" value of measurements of tumors. Malignant tumors tends to have "worse" or larger values for different features. For example, in the first panel, the box of the malignant tumor lies higher than benign tumors, which implies that if mean radius of tumor is relatively big, it is more likely to be malignant.
+
+```{r,echo=FALSE}
+#relationship between the worst value of features and diagnosis result
+data_worst <- melt(breast_cancer[,c(2,23:32)], id.var = "diagnosis")
+box_worst <- ggplot(data = data_worst, aes(x=variable, y=value)) + 
+  geom_boxplot(aes(fill=diagnosis)) + facet_wrap( ~ variable, scales="free")+ xlab("Variables") + ylab("")+ guides(fill=guide_legend(title="Group"))+ labs(title="The worst value v.s. diagnosis result")
+box_worst
+```
+
+In the following correlation plot, there exists high correlation between some predictors. It makes sense for radius, area and perimeter, since area and perimeter are functions of radius. Concavity points has high correlation with radius, perimeter and area. It makes sense since that more concave portions will increase the contour. 
+
+```{r,echo=FALSE}
+# correlation plots between predictors
+mean.corr<-cor(breast_cancer[,c(3:12)],method="pearson")
+corrplot(mean.corr, diag=F,type='lower',method='ellipse')
+
+se.corr<-cor(breast_cancer[,c(13:22)],method="pearson")
+corrplot(se.corr, diag=F,type='lower',method='ellipse')
+
+w.corr<-cor(breast_cancer[,c(23:32)],method="pearson")
+corrplot(w.corr, diag=F,type='lower',method='ellipse')
+```
+
+In the following correlation plot, we also notice that most of the predictors have strong or weak positive correlations. Few of them have weak negative correlations with each other. 
+
+```{r,echo=FALSE}
+all.corr<-cor(breast_cancer[,c(3:32)],method="pearson")
+corrplot(all.corr, order='hclust', method='ellipse',addCoef.col = 'black',type='lower', number.cex = 0.25,tl.cex = 0.25, diag=F,tl.col = 'black',tl.srt=15)
+
+```
+
+## Data splitting
+
+The data is split into 454 training data and 115 testing data points.
+
+```{r}
+# split the data into training and testing
+cancer_split <- initial_split(breast_cancer,prop=0.80,strata=diagnosis)
+cancer_training <- training(cancer_split)
+cancer_testing <- testing(cancer_split)
+dim(cancer_training)
+dim(cancer_testing)
+```
+
+Fold the training data into 10 folds with 5 repeats. Stratify on the response variable "diagnosis".
+
+```{r}
+# 10 folds validation
+bc_fold <- vfold_cv(cancer_training,v=10,repeats=5)
+```
+
+## Model building
+
+## Buiding the recipe
+
+Create a recipe as below. There are only numerical predictors, I only normalize all the predictors. Otherwise the range for some predictors is too large.  
+```{r}
+# prepare recipe with 30 predictors, normalize all 
+bc_recipe <- recipe(diagnosis~radius_mean + texture_mean + perimeter_mean + area_mean + smoothness_mean + compactness_mean+ concavity_mean+ symmetry_mean + concave_points_mean + fractal_dimension_mean + radius_se + texture_se + perimeter_se + area_se + smoothness_se + compactness_se+ concavity_se + concave_points_se + symmetry_se + fractal_dimension_se + radius_worst + texture_worst + perimeter_worst + area_worst + smoothness_worst + compactness_worst+ concavity_worst + concave_points_worst + symmetry_worst + fractal_dimension_worst,data=cancer_training) %>% step_normalize(all_predictors())
+```
+
+
+
+## Preparing & Running The Models for Repeated Cross Validation
+Since I am doing classification, I choose to build five models which are frequently used in classification problems: 
+1. Logistic Regression
+2. Naive Bayes
+3. Random Forest
+4. Boosted Tree
+5. Support Vector Machines
+
+
+## 1. Logistic Regression
+First, a logistic regression model with "glm" engine is built. We means to do a classification. The recipe built previous is added. 
+```{r}
+# build the logistic regression model
+log_reg <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+
+log_wkflow <- workflow() %>% 
+  add_model(log_reg) %>% 
+  add_recipe(bc_recipe)
+
+```
+
+Fit the model to the folds and examine the performance
+```{r}
+# fit logistic model to folds
+log_fitfold <- fit_resamples(log_wkflow, bc_fold)
+collect_metrics(log_fitfold)
+```
+
+The mean accuracy on folds is 0.939, which means that the model does good. 
+
+
+## Random Forest
+For the Random Forest Model, we tuned min_n, trees and mtry, and set the mode to “classification” as we are predicting a categorical value. We used the “ranger” engine” and build a workflow with the model and the recipe.
+
+
+```{r}
+# prepared random forest model
+rf_spec <- rand_forest(mtry = tune(),trees = tune(), min_n=tune()) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+rf_wf <- workflow() %>%
+  add_recipe(bc_recipe) %>%
+  add_model(rf_spec)
+```
+
+To set up the model parameters, we have to consider the total number of predictors and their correlation. For classification model, the mtry is usually $\sqrt p$ where p is the total number of predictors. Therefore, I set mtry between 1-15; trees between 100-500; and min_n 1-10. I also set the tuning grid levels=4.
+
+```{r}
+# prepare tune grid, determine range of parameters
+reg_grid <- grid_regular(mtry(range = c(1, 15)), trees(range=c(100,500)), min_n(range=c(1,10)),levels = 4)
+
+```
+
+Next, plot the tuned result and compare. 
+```{r}
+# examine the result of different parameters
+tune_res2 <- tune_grid(
+  rf_wf, 
+  resamples = bc_fold, 
+  grid = reg_grid, 
+  metrics = metric_set(accuracy)
+)
+autoplot(tune_res2)
+```
+```{r}
+# compare accuracy rate
+collect_metrics(tune_res2) %>% arrange(desc(mean))
+```
+The model performs best with mtry=10, trees=366 and min_n=7. The mean accuracy is 0.963, which is even better than the logistic model. 
+
+
+
+## Naive Bayes
+Then, for the Naive Bayes model, I use the "klaR" engine and "classification" model as well. 
+```{r}
+# prepare naive bayes model
+nb_mod <- naive_Bayes() %>% 
+  set_mode("classification") %>% 
+  set_engine("klaR") %>% 
+  set_args(usekernel = FALSE) 
+
+nb_wkflow <- workflow() %>% 
+  add_model(nb_mod) %>% 
+  add_recipe(bc_recipe)
+
+```
+
+Fit the model to folds and check the performance. 
+
+```{r}
+# fit to folds
+nb_fitfold <- fit_resamples(nb_wkflow, bc_fold)
+
+collect_metrics(nb_fitfold)
+
+```
+
+The mean accuracy is 0.929.
+
+
+## Boosted Tree
+For Boosted tree, I use the "xgboost" engine. The parameter "trees" is tuned. Four levels are set. 
+
+
+```{r}
+# built boosted tree model
+boost_spec <- boost_tree(trees = tune()) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+boost_wf <- workflow() %>%
+  add_model(boost_spec) %>%
+  add_recipe(bc_recipe)
+# choose range for parameters
+boost_grid <- grid_regular(trees(range=c(10,1000)),levels = 4)
+```
+
+The performance on the folds are displayed below.
+The mean accuracy increases with the increment of the value of trees. It stays relatively the same for trees between about 270 to 1000.
+
+```{r}
+# tune the model, and visulize
+tune_res3 <- tune_grid(
+  boost_wf, 
+  resamples = bc_fold, 
+  grid = boost_grid, 
+  metrics = metric_set(accuracy)
+)
+autoplot(tune_res3)
+```
+
+
+```{r}
+# compare accuracy
+collect_metrics(tune_res3) %>% arrange(desc(mean))
+```
+
+
+The model performs best with trees=340. The mean accuracy is 0.963. 
+
+## Support Vector Machines(SVM)
+Finally, the SVM is built with engine "kernlab". Parameter Cost is tuned. 
+
+```{r}
+# prepare SVM model and workflow
+svm_rbf_spec <- svm_rbf(cost=tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+
+svm_wf <- workflow() %>%
+  add_model(svm_rbf_spec) %>%
+  add_recipe(bc_recipe)
+```
+
+The cost represents the threshold of the number wrongly classified data points. The plot below demonstrates the performance. As the value of cost increases, the mean accuracy increase first and then decreases. 
+
+```{r}
+# choose range for parameters
+svm_grid <- grid_regular(cost(range=c(0.1,5)),levels = 8)
+```
+
+```{r}
+# tune the model, visualize 
+tune_svm <- tune_grid(
+  svm_wf, 
+  resamples = bc_fold, 
+  grid = svm_grid, 
+  metrics = metric_set(accuracy)
+)
+autoplot(tune_svm)
+```
+
+```{r}
+# compare accuracy rate
+collect_metrics(tune_svm) %>% arrange(desc(mean))
+```
+
+The model performs best on folds when cost=2.83. The mean accuracy is 0.979.
+
+
+## Compare Model Performance
+The table below compares the performance of different models. SVM model has the best mean accuracy data. 
+
+```{r}
+# compare performance for different models
+acc <- data.frame(Model=c("Logistic regression", "Random forest", "Naive Bayes", "Boosted tree","SVM"),
+                      accuracy = c(0.939,0.963,0.929,0.963,0.979))
+acc
+```
+
+Therefore, finalize the model with SVM workflow. Then we SVM model to fit the training data. 
+
+```{r}
+# finalize the workflow as SVM
+best_final <- select_best(tune_svm,metric="accuracy")
+wf_final <- finalize_workflow(svm_wf, best_final)
+# fit training data
+final_fit <- fit(wf_final, data = cancer_training)
+
+```
+
+```{r}
+# examine testing accuracy
+augment(final_fit, new_data = cancer_testing) %>%
+   accuracy(diagnosis, .pred_class)
+
+```
+The test accuracy is 0.983. The SVM model performs pretty well.
+
+```{r}
+# conformation matrix for the predicted outcome vs true value
+augment(final_fit, new_data = cancer_testing) %>%
+  conf_mat(truth = diagnosis, estimate = .pred_class) %>% autoplot(type="heatmap")
+```
+
+There is only two data point mis-classified. A malignant tumor is wrongly classified as benign. All the benign tumors are correctly classified. 
+
+## Conclusion
+
+In this project, we use all of the thirty numerical predictors to build five classification models--logistic regression, naive bayes, random forest, boosted tree and SVM--and figure out that the SVM model gives the best validation accuracy. The SVM results in a nearly perfect prediction with only 2 data points misclassified in testing data with size of 115. The accuracy rate is 0.983. The random forest model also have good performance with validation accuracy to be 0.965. Since we have used large number of predictors and some of them have high correlation, the random forest model helps determine the subset of predictors to use and decorrelates predictors. 
+
+Although the model performs pretty well, it still need some improvements. Regarding to the thirty predictors we used to build to model, it is noticeable in the EDA part that malignant tumors have higher values in most features but not all of them. From the vip graph, we could also notice that some predictors are much more useful than others, such as "concave_points_worst," "area_worst," "perimeter_worst," and "concave_mean." This indicates that the diagnosis result may be influenced relatively significantly by the "worst" features. This indication might be useful for the doctors who should focus more on the worst or largest measurements when they diagnose tumor. In addition, the correlation plot also illustrates strong correlation between some predictors. In the future works, we may consider reducing the total number predictors to build the model. It is important to figure out which predictors have the most significant influence on the diagnosis result. Fewer predictors helps to space to store data. In addition, it also reduces workload of the data collectors and medical professions. The model generated with smaller size but contains more information is likely to be useful and practical for the medicine. 
+
+Overall, this dataset of breast cancer is a good source to construct the model that capture the patterns of features and gives a accurate outcome. 
+
+\newpage
+## Code appendix
+
+```{r appendix, ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+```
